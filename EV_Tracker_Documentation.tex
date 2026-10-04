@@ -1,0 +1,116 @@
+\documentclass[a4paper,12pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{geometry}
+\geometry{a4paper, margin=1in}
+\usepackage{hyperref}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{bookmark}
+
+\definecolor{codebg}{RGB}{242,242,242}
+\lstset{
+    backgroundcolor=\color{codebg},
+    basicstyle=\ttfamily\small,
+    breaklines=true,
+    frame=single,
+    numbers=left,
+    numberstyle=\tiny\color{gray},
+    keywordstyle=\color{blue},
+    stringstyle=\color{red},
+    commentstyle=\color{green!60!black}
+}
+
+\title{\textbf{EV Tracking System}\\ \large Project Documentation}
+\author{}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\tableofcontents
+\newpage
+
+\section{Project Details}
+The EV Tracking System is a robust, real-time IoT solution designed for tracking electric vehicles (or other assets) across a defined geographic area. It features an embedded electronics hardware module that captures granular location data using a high-precision GPS receiver and transmits telemetry over local Wi-Fi to a custom-built server. The system comes equipped with an administrator dashboard that renders the exact location of registered vehicles natively on an OpenStreetMap interface and provides an emergency messaging/signal suite to remotely command specific vehicles.
+
+\section{Tech Stack}
+\begin{itemize}
+    \item \textbf{Hardware:} ESP32 Microcontroller, SparkFun u-blox NEO-M9N GNSS (GPS) module.
+    \item \textbf{Backend:} Python, FastAPI framework, Uvicorn as the ASGI web server, and Pydantic for strict JSON payload validation. The architecture implements an in-memory storage dictionary that persistently retains only the latest positional record per vehicle for maximum efficiency.
+    \item \textbf{Frontend:} Vanilla HTML, CSS, and JavaScript. Uses an interactive map API (like Leaflet mapping onto OpenStreetMap) wrapped within a modern, premium "glassmorphic" aesthetic.
+    \item \textbf{Protocols:} HTTP/HTTPS REST APIs, local IPv4 Networking via Mobile Hotspot, and I2C hardware communication standard.
+\end{itemize}
+
+\section{System Endpoints}
+The FastAPI backend exposes the following REST architecture routes:
+\begin{itemize}
+    \item \texttt{POST /api/login}: Handshake mechanism; validates administrator credentials ensuring secure dashboard access.
+    \item \texttt{POST /api/location}: Intakes the JSON schema \texttt{\{ev\_id, lat, lng, timestamp\}} from the ESP32. It overrides the specific vehicle's previous metric to register the latest coordinate geometry.
+    \item \texttt{GET /api/evs}: Protected by Basic Authentication. Pings the entire memory store of vehicles and outputs an array of their latest known coordinate locations to update the frontend render.
+    \item \texttt{POST /api/message}: Protected endpoint. The frontend invokes this route with an \texttt{\{ev\_id, message\}} payload. It stages an actionable command into the backend memory matrix with a \texttt{read = False} condition.
+    \item \texttt{GET /api/message/\{ev\_id\}}: Unauthenticated poll route designated explicitly for the ESP32 array to download staged commands targeting their distinct vehicle ID. Marks messages as \texttt{read = True} upon extraction.
+\end{itemize}
+
+\section{ESP32 \(\leftrightarrow\) Backend Communication Methodology}
+Communication is constructed atop a half-duplex HTTP polling methodology. Working entirely through a standard Local Area Network (LAN), the ESP32 handles networking duties by connecting to the mobile hotspot grid. It functions purely as a REST client, establishing TCP handshakes against the fixed IP address of the FastAPI backend router (\texttt{192.168.206.18:8000}) to push updates or pull instructions synchronously. Payloads serialize strictly into JSON format.
+
+\section{Mechanism: Fetching Coordinates}
+The ESP32 communicates with the u-blox NEO-M9N GNSS device utilizing the Inter-Integrated Circuit (I2C) bus wired via SDA (pin 21) and SCL (pin 22). It employs the \texttt{SparkFun\_u-blox\_GNSS\_Arduino\_Library} driver set which overrides default configurations, preventing cache-resets, and executes a \texttt{getPVT()} (Position, Velocity, and Time) read operation. The raw coordinate points logged by the NEO-M9N module are internally captured as enormous integers which are subsequently scaled downward (divided by $10,000,000.0$) against the decimal float limits to resolve standard geodesic Longitude and Latitude geometry.
+
+\section{Mechanism: Coordinate Transmission and Display}
+Coordinates travel through the framework via a multi-staged pipeline:
+\begin{enumerate}
+    \item \textbf{Firmware Push:} The ESP32 embeds the calculated coordinate figures onto an API String matrix (\textit{e.g.,} \texttt{{"ev\_id":"EV-001", "lat":25.321, "lng":83.421}}). It submits an HTTP POST transmission mapping to \texttt{/api/location}.
+    \item \textbf{Backend Staging:} Python processes the request object and immediately indexes it via the vehicle ID directly against the memory heap inside an \texttt{ev\_locations} mapping dictionary. By replacing the data structure instead of appending, zero archival bloat is generated.
+    \item \textbf{Frontend Pipeline:} A parallel JavaScript process embedded within the dashboard interface initiates continuous \texttt{GET /api/evs} AJAX calls. Upon receiving the JSON array, it feeds the array mapping parameters into the Leaflet library matrix which re-plots the digital vehicle pin markers to their new corresponding geodesic tile block without triggering a webpage reload.
+\end{enumerate}
+
+\section{Methodology: Backend-to-ESP32 Messaging (Signal Call)}
+To overcome router NAT limitations that block a server from pushing a request actively toward an IoT device, the framework mimics two-way communication using a dedicated periodic poll protocol:
+\begin{enumerate}
+    \item The administrator interfaces with the Front-End console and issues an instruction/signal directed at \texttt{EV-001}. 
+    \item The Dashboard POSTs this signal array locally toward the backend server which drops the message string into an \texttt{ev\_messages} directory array.
+    \item The remote ESP32 acts iteratively. At predefined staggered intervals, it independently establishes an HTTP GET routine onto the \texttt{/api/message/\{ev\_id\}} sequence.
+    \item The Server intercepts this poll, checks if an unread payload coordinates with the requesting ID, wraps the message into a JSON structure (\texttt{\{"message":"[Signal Command]"\}}), and injects it into the HTTP 200 response line while flipping the message memory state to Read.
+    \item The ESP32 parses the incoming substring array, locates the directive index, compares state variance to ensure processing redundancies aren't triggered, and executes the physical alert functionality upon validation.
+\end{enumerate}
+
+\section{Operational Flow \& Time Delays}
+\subsection{Operational Flow}
+Upon initialization:
+\begin{itemize}
+    \item The Backend initializes an ASGI asynchronous pipeline.
+    \item The ESP32 establishes I2C connectivity and attaches itself rigidly to the target Mobile Hotspot SSID. 
+    \item Inside the \texttt{void loop()}, the firmware handles hardware logic chronologically. It checks the I2C cache for an updated location block lock, structures the outgoing API string, waits for the operational window timer to expire, pushes information outward, then waits for the reciprocal timer to intercept inbound messages.
+\end{itemize}
+
+\subsection{Programmatic Loop Timers}
+To distribute power regulation and minimize network bottlenecking or bandwidth degradation, the ESP32 governs functionality loops artificially:
+\begin{itemize}
+    \item \textbf{GPS Transmission Interval (\texttt{GPS\_INTERVAL}):} Fixed at completely independent cycles of exactly 3,000 ms (3 seconds). 
+    \item \textbf{Messaging Interception Wait (\texttt{MSG\_INTERVAL}):} Fixed securely to cycle every 5,000 ms (5 seconds). 
+    \item \textbf{Inherent Latency Constraints:} Sub-LAN HTTP traffic introduces $\sim 10$--$80$ ms of dynamic overhead latency, and JavaScript frontend timers inherently dictate screen-refresh delays (frequently ranging $2,000$--$5,000$ ms).
+\end{itemize}
+
+\section{Network \& Equipment Requirements}
+\subsection{ESP Hardware Core Network Baseline}
+\begin{itemize}
+    \item \textbf{Connectivity standard:} IEEE 802.11 b/g/n local topology matching WPA/WPA2 authentication via Personal Hotspot (SSID: \textit{Galaxy F23 5G11B8}). 
+    \item \textbf{Accessibility Protocol:} Cannot utilize dynamically rotating IP logic. The primary target server host must hold a statically reserved IPv4 address identity logic matching \texttt{192.168.206.18} natively allocated by the router hardware DHCP. Use of arbitrary local host names (e.g. \texttt{localhost}/\texttt{127.0.0.1}) operates in a closed loop internally voiding remote connections. 
+\end{itemize}
+
+\subsection{Administration Console Operation Requirements (Client Device)}
+\begin{itemize}
+    \item To command the system and transmit calls/alerts toward the ESP arrays, an administrator requires a modern interface display capable of HTML/CSS parsing. No application layer libraries need installing manually. 
+    \item The system architecture necessitates valid authorization keys. (e.g., credentials bound to the \texttt{VALID\_USERS} structure hash such as \texttt{admin1}).
+\end{itemize}
+
+\subsection{System Access Requirements}
+\begin{itemize}
+    \item All system agents (ESP32 tracker, host laptop functioning as the Server, and parallel mobile devices functioning as remote view consoles) must fall securely embedded onto the identical Wi-Fi Subnet perimeter (Intranet scenario limit).
+    \item Assuming localized utilization without reverse-proxy tunneled routing schemes (\textit{e.g.,} Ngrok infrastructure), the administrator must formulate URL strings connecting structurally matching \texttt{http://<Backend\_Local\_IP>:8000} natively across web browsers.
+\end{itemize}
+
+\end{document}

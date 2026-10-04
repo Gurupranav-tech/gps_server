@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EV Fleet Tracker | Admin Dashboard</title>
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <!-- Login Modal -->
+    <div id="login-modal" class="modal-overlay">
+        <div class="glass-panel login-box">
+            <div class="login-icon">🔒</div>
+            <h2>System Login</h2>
+            <p>Enter your admin credentials to access the dashboard.</p>
+            <div class="input-group">
+                <label for="username-input">Username</label>
+                <input type="text" id="username-input" placeholder="Enter username" autocomplete="username">
+            </div>
+            <div class="input-group">
+                <label for="password-input">Password</label>
+                <input type="password" id="password-input" placeholder="Enter password" autocomplete="current-password">
+            </div>
+            <button id="login-btn" class="primary-btn">
+                <span id="login-btn-text">Authenticate</span>
+                <span id="login-spinner" class="spinner hidden"></span>
+            </button>
+            <div id="login-error" class="error-text"></div>
+        </div>
+    </div>
+
+    <!-- Main Dashboard -->
+    <main id="dashboard" class="hidden">
+        <div class="sidebar glass-panel">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <span class="pulse-dot"></span> EV Fleet
+                </div>
+            </div>
+
+            <div class="ev-list-container">
+                <h3>Active Vehicles</h3>
+                <ul id="ev-list" class="ev-list">
+                    <!-- Dynamic EV list items go here -->
+                </ul>
+            </div>
+
+            <div class="message-panel">
+                <h3>Alert Vehicle</h3>
+                <div class="input-group">
+                    <select id="ev-selector">
+                        <option value="">Select EV...</option>
+                    </select>
+                </div>
+                <button id="send-msg-btn" class="primary-btn danger-btn">Dispatch Call Signal</button>
+                <div id="msg-status" class="status-text"></div>
+            </div>
+        </div>
+
+        <div id="map-container">
+            <div id="map"></div>
+        </div>
+    </main>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <script src="main.js"></script>
+</body>
+
+</html>
