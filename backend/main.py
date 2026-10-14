@@ -1,5 +1,5 @@
 import os
-from fastapi import FastAPI, HTTPException, Request, Depends
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -11,14 +11,9 @@ import base64
 app = FastAPI(title="EV Tracking Server")
 
 # ── In-memory stores (only latest record per EV is kept) ──────────────────────
-# { ev_id: {"ev_id": ..., "lat": ..., "lng": ..., "timestamp": ...} }
-ev_locations: dict = {}
+ev_locations: dict = {}   # { ev_id: {"ev_id","lat","lng","timestamp"} }
+ev_messages: dict = {}    # { ev_id: {"message","user","location","timestamp","read"} }
 
-# { ev_id: {"message": ..., "timestamp": ..., "read": bool} }
-ev_messages: dict = {}
-# ─────────────────────────────────────────────────────────────────────────────
-
-# Allow CORS for development
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -27,7 +22,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Authentication dictionary (EV Admins)
 VALID_USERS = {
     "admin1:pass123": True,
     "admin2:pass456": True
@@ -41,14 +35,20 @@ class LocationData(BaseModel):
 
 class MessageData(BaseModel):
     ev_id: str
-    message: str
+    message: str = "CALL"
+    user: str = ""
+    location: str = ""
 
 class LoginData(BaseModel):
     username: str
     password: str
 
 
-# ── Helper: verify Basic auth from request header ─────────────────────────────
+def clean(s: str) -> str:
+    # Remove characters that break the ESP32's simple JSON parsing; LCD fits 16 chars
+    return s.replace('"', '').replace('\\', '').strip()[:16]
+
+
 def verify_auth(req: Request):
     auth_header = req.headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Basic "):
@@ -63,7 +63,6 @@ def verify_auth(req: Request):
     return credentials
 
 
-# ── Login endpoint ────────────────────────────────────────────────────────────
 @app.post("/api/login")
 async def login(data: LoginData):
     creds = f"{data.username}:{data.password}"
@@ -76,7 +75,6 @@ async def login(data: LoginData):
 async def update_location(data: LocationData):
     if not data.timestamp:
         data.timestamp = datetime.utcnow().isoformat()
-    # Overwrite with latest coordinate — no history kept
     ev_locations[data.ev_id] = data.model_dump()
     return {"status": "success"}
 
@@ -84,7 +82,6 @@ async def update_location(data: LocationData):
 @app.get("/api/evs")
 async def get_all_evs(req: Request):
     verify_auth(req)
-    # Return the latest position for every EV
     return list(ev_locations.values())
 
 
@@ -92,7 +89,9 @@ async def get_all_evs(req: Request):
 async def send_message(data: MessageData, req: Request):
     verify_auth(req)
     ev_messages[data.ev_id] = {
-        "message": data.message,
+        "message": clean(data.message) or "CALL",
+        "user": clean(data.user),
+        "location": clean(data.location),
         "timestamp": datetime.utcnow().isoformat(),
         "read": False,
     }
@@ -103,13 +102,11 @@ async def send_message(data: MessageData, req: Request):
 async def get_message(ev_id: str):
     msg = ev_messages.get(ev_id)
     if msg and not msg.get("read", True):
-        # Mark as read
         ev_messages[ev_id]["read"] = True
-        return {"message": msg["message"]}
-    return {"message": ""}
+        return {"message": msg["message"], "user": msg["user"], "location": msg["location"]}
+    return {"message": "", "user": "", "location": ""}
 
 
-# Mount static frontend
 frontend_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend")
 if os.path.exists(frontend_path):
     app.mount("/", StaticFiles(directory=frontend_path, html=True), name="frontend")

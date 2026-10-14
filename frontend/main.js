@@ -5,12 +5,12 @@ let authCode = '';
 
 const initMap = () => {
     map = L.map('map', {zoomControl: false}).setView([20.5937, 78.9629], 5);
-    
+
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         maxZoom: 19,
         attribution: '© OpenStreetMap'
     }).addTo(map);
-    
+
     L.control.zoom({
         position: 'bottomright'
     }).addTo(map);
@@ -29,14 +29,16 @@ const evList = document.getElementById('ev-list');
 const evSelector = document.getElementById('ev-selector');
 const sendMsgBtn = document.getElementById('send-msg-btn');
 const msgStatus = document.getElementById('msg-status');
+const userNameInput = document.getElementById('user-name-input');
+const userLocationInput = document.getElementById('user-location-input');
+
+let pollTimer = null;
 
 // ── Login Handler ────────────────────────────────────────────────────────────
 const handleLogin = async () => {
     const username = usernameInput.value.trim();
-    console.log(passwordInput, passwordInput.innerText);
     const password = passwordInput.value.trim();
 
-    // Clear previous errors
     loginError.textContent = '';
 
     if (!username || !password) {
@@ -45,7 +47,6 @@ const handleLogin = async () => {
         return;
     }
 
-    // Show loading state
     loginBtn.disabled = true;
     loginBtnText.textContent = 'Authenticating...';
     loginSpinner.classList.remove('hidden');
@@ -58,23 +59,21 @@ const handleLogin = async () => {
         });
 
         if (res.ok) {
-            // Store the auth code for future API calls
             authCode = btoa(`${username}:${password}`);
 
-            // Smooth transition to the dashboard
             loginModal.style.opacity = '0';
             setTimeout(() => {
                 loginModal.classList.add('hidden');
                 dashboard.classList.remove('hidden');
-                initMap();
+                if (!map) initMap();
                 fetchEVLocations();
-                setInterval(fetchEVLocations, 200);
+                if (pollTimer) clearInterval(pollTimer);
+                pollTimer = setInterval(fetchEVLocations, 1000);
             }, 400);
         } else {
             const err = await res.json();
             loginError.textContent = err.detail || 'Invalid username or password.';
             shakeElement(loginError);
-            // Reset button
             loginBtn.disabled = false;
             loginBtnText.textContent = 'Authenticate';
             loginSpinner.classList.add('hidden');
@@ -88,16 +87,14 @@ const handleLogin = async () => {
     }
 };
 
-// Shake animation for error feedback
 const shakeElement = (el) => {
     el.classList.remove('shake');
-    void el.offsetWidth; // trigger reflow
+    void el.offsetWidth;
     el.classList.add('shake');
 };
 
 loginBtn.addEventListener('click', handleLogin);
 
-// Allow pressing Enter to login
 usernameInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') passwordInput.focus();
 });
@@ -115,16 +112,17 @@ const customIcon = L.divIcon({
 const fetchEVLocations = async () => {
     try {
         const res = await fetch('/api/evs', {
-            headers: {
-                'Authorization': `Basic ${authCode}`
-            }
+            headers: { 'Authorization': `Basic ${authCode}` }
         });
         if (!res.ok) {
             if (res.status === 401) {
-                // Session invalid — kick back to login
+                if (pollTimer) clearInterval(pollTimer);
                 dashboard.classList.add('hidden');
                 loginModal.classList.remove('hidden');
                 loginModal.style.opacity = '1';
+                loginBtn.disabled = false;
+                loginBtnText.textContent = 'Authenticate';
+                loginSpinner.classList.add('hidden');
                 loginError.textContent = 'Session expired. Please log in again.';
                 return;
             }
@@ -142,22 +140,18 @@ const updateMapAndSidebar = (evs) => {
     evList.innerHTML = '';
     const currentSelection = evSelector.value;
     evSelector.innerHTML = '<option value="">Select EV...</option>';
-    
-    let bounds = [];
 
     evs.forEach(ev => {
-        // Update Map Markers
+        const popup = `<b>${ev.ev_id}</b><br>Last seen: ${new Date(ev.timestamp).toLocaleTimeString()}`;
         if (markers[ev.ev_id]) {
             markers[ev.ev_id].setLatLng([ev.lat, ev.lng]);
-            markers[ev.ev_id]._popup.setContent(`<b>${ev.ev_id}</b><br>Last seen: ${new Date(ev.timestamp).toLocaleTimeString()}`);
+            markers[ev.ev_id]._popup.setContent(popup);
         } else {
             markers[ev.ev_id] = L.marker([ev.lat, ev.lng], {icon: customIcon})
-                .bindPopup(`<b>${ev.ev_id}</b><br>Last seen: ${new Date(ev.timestamp).toLocaleTimeString()}`)
+                .bindPopup(popup)
                 .addTo(map);
         }
-        bounds.push([ev.lat, ev.lng]);
-        
-        // Update Sidebar List
+
         const li = document.createElement('li');
         li.className = 'ev-item';
         li.innerHTML = `
@@ -169,16 +163,14 @@ const updateMapAndSidebar = (evs) => {
             evSelector.value = ev.ev_id;
         });
         evList.appendChild(li);
-        
-        // Update Select Dropdown
+
         const option = document.createElement('option');
         option.value = ev.ev_id;
         option.textContent = ev.ev_id;
         evSelector.appendChild(option);
     });
-    
-    // Restore selection
-    if(evs.some(e => e.ev_id === currentSelection)) {
+
+    if (evs.some(e => e.ev_id === currentSelection)) {
         evSelector.value = currentSelection;
     }
 };
@@ -186,31 +178,34 @@ const updateMapAndSidebar = (evs) => {
 // ── Send Call Signal (authenticated) ─────────────────────────────────────────
 sendMsgBtn.addEventListener('click', async () => {
     const evId = evSelector.value;
-    const msg = "CALL";
-    
-    if (!evId) {
-        msgStatus.textContent = "Please select an EV first.";
+    const userName = userNameInput.value.trim();
+    const userLocation = userLocationInput.value.trim();
+
+    if (!evId || !userName || !userLocation) {
+        msgStatus.textContent = "Select an EV and enter user name and location.";
         msgStatus.style.color = "var(--danger)";
         return;
     }
-    
+
     try {
         sendMsgBtn.disabled = true;
         msgStatus.textContent = "Sending...";
         msgStatus.style.color = "var(--text-secondary)";
-        
+
         const res = await fetch('/api/message', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': `Basic ${authCode}`
             },
-            body: JSON.stringify({ ev_id: evId, message: msg })
+            body: JSON.stringify({ ev_id: evId, message: "CALL", user: userName, location: userLocation })
         });
-        
+
         if (res.ok) {
             msgStatus.textContent = "Call Signal Dispatched!";
             msgStatus.style.color = "var(--success)";
+            userNameInput.value = '';
+            userLocationInput.value = '';
         } else {
             const err = await res.json();
             msgStatus.textContent = err.detail || "Authentication Failed!";
@@ -221,6 +216,6 @@ sendMsgBtn.addEventListener('click', async () => {
         msgStatus.style.color = "var(--danger)";
     } finally {
         sendMsgBtn.disabled = false;
-        setTimeout(() => { if(msgStatus.style.color === "var(--success)") msgStatus.textContent = ""; }, 3000);
+        setTimeout(() => { if (msgStatus.style.color === "var(--success)") msgStatus.textContent = ""; }, 3000);
     }
 });
